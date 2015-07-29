@@ -1,0 +1,96 @@
+## This script will plot a set of IPs from a wireshark capture. The Ip's are filtered on source and destination. In my dataset there were over 10k lines of source
+## and destination. After completions of the analysis there were only 15 unique connections. This would be very helpful in incident response when you are looking at packet captures from an infected host or when looking at firewall logs. 
+## You could visualize all host that were talking to the C2 and if there possibly lateral movement within the network.
+## first thing you will need is to install Cytoscape 2.8.1 yes I know 3.2.1 is out the plug-in for or is not out yet. This is located here http://chianti.ucsd.edu/Cyto-2_8_1/ 
+## You will also need the RCytoscape package located here http://rcytoscape.systemsbiology.net/versions/current/installation/index.html 
+
+ source ('http://bioconductor.org/biocLite.R')
+ biocLite ('RCytoscape')
+
+ ## Start RCytoscape
+library (RCytoscape)
+  cy = CytoscapeConnection ()
+  pluginVersion (cy)
+
+  ## You will need the following library as well
+library("igraph")
+library("plyr")
+
+# Read a data set.  
+
+# Data format: dataframe with 2 variables; variables 1 & 2 correspond to interactions 
+dataSet <- read.csv("ips.csv", header = FALSE, sep = ",")
+
+# Create a graph. Use simplify to ensure that there are no duplicated edges or self loops 
+gD <- simplify(graph.data.frame(dataSet, directed=FALSE))
+
+# Print number of nodes and edges  
+# vcount(gD) 
+# ecount(gD)  
+# Calculate some node properties and node similarities that will be used to illustrate  
+# different plotting abilities 
+# Calculate degree for all nodes 
+      
+degAll <- degree(gD, v = V(gD), mode = "all") 
+      
+# Calculate betweenness for all nodes 
+
+betAll <- betweenness(gD, v = V(gD), directed = FALSE) / (((vcount(gD) - 1) * (vcount(gD)-2)) / 2) 
+
+betAll.norm <- (betAll - min(betAll))/(max(betAll) - min(betAll)) 
+      
+rm(betAll) 
+      
+#Calculate Dice similarities between all pairs of nodes 
+      
+dsAll <- similarity.dice(gD, vids = V(gD), mode = "all") 
+
+############################################################################################ 
+# Add new node/edge attributes based on the calculated node properties/similarities 
+
+gD <- set.vertex.attribute(gD, "degree", index = V(gD), value = degAll) 
+
+gD <- set.vertex.attribute(gD, "betweenness", index = V(gD), value = betAll.norm) 
+
+# Check the attributes 
+# summary(gD) 
+ 
+F1 <- function(x) {data.frame(V4 = dsAll[which(V(gD)$name == as.numeric(x$V1)), which(V(gD)$name == as.numeric(x$V2))])} 
+
+dataSet.ext <- ddply(dataSet, .variables=c("V1", "V2"), function(x) data.frame(F1(x))) 
+ 
+gD <- set.edge.attribute(gD, "weight", index = E(gD), value = 0) 
+
+gD <- set.edge.attribute(gD, "similarity", index = E(gD), value = 0) 
+
+# The order of interactions in gD is not the same as it is in dataSet or as it is in the edge list, 
+# and for that reason these values cannot be assigned directly 
+
+E(gD)[as.character(dataSet.ext$V1) %--% as.character(dataSet.ext$V2)]$weight <- as.numeric(dataSet.ext$V3) 
+
+E(gD)[as.character(dataSet.ext$V1) %--% as.character(dataSet.ext$V2)]$similarity <- as.numeric(dataSet.ext$V4) 
+
+# Check the attributes 
+# summary(gD) 
+# Print network in Cytoscape 
+# This requires RCytoscape package and CytoscapeRPC plugin 
+      
+library("RCytoscape") 
+gD.cyt <- igraph.to.graphNEL(gD) 
+
+# We have to create attributes for graphNEL 
+# We'll keep the same name, so the values are passed from igraph 
+
+gD.cyt <- initNodeAttribute(gD.cyt, 'degree', 'numeric', 0)  
+
+gD.cyt <- initNodeAttribute(gD.cyt, 'betweenness', 'numeric', 0)  
+
+gD.cyt <- initEdgeAttribute (gD.cyt, "weight", 'integer', 0) 
+
+gD.cyt <- initEdgeAttribute (gD.cyt, "similarity", 'numeric', 0) 
+      
+# Now we can create a new graph window in cytoscape 
+# Be sure that CytoscapeRPC plugin is activated 
+
+gDCW <- new.CytoscapeWindow("Malware Ip's", graph = gD.cyt, overwriteWindow = TRUE)
+#http://www.vesnam.com/Rblog/viznets1/ great recourse 
